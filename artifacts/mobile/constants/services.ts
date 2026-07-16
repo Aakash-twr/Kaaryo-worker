@@ -156,21 +156,3 @@ export const MOCK_JOBS: MockJob[] = [
     customerReview: "Good service, fixed the problem quickly.",
   },
 ];
-
-export const EARNINGS_DATA = {
-  today: { amount: 1248, jobs: 2 },
-  week: {
-    total: 6840,
-    jobs: 11,
-    days: [
-      { day: "Mon", amount: 849 },
-      { day: "Tue", amount: 1248 },
-      { day: "Wed", amount: 699 },
-      { day: "Thu", amount: 1099 },
-      { day: "Fri", amount: 1248 },
-      { day: "Sat", amount: 1497 },
-      { day: "Sun", amount: 200 },
-    ],
-  },
-  month: { total: 28450, jobs: 46 },
-};

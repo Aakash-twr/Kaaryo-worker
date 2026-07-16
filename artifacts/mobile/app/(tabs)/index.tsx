@@ -1,7 +1,9 @@
 import { Feather } from "@expo/vector-icons";
-import React, { useRef } from "react";
+import { useFocusEffect } from "expo-router";
+import React, { useCallback, useState } from "react";
 import {
-  Animated,
+  ActivityIndicator,
+  Alert,
   Platform,
   Pressable,
   ScrollView,
@@ -11,18 +13,77 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { JobCard } from "@/components/JobCard";
+import { ActiveJobCard } from "@/components/ActiveJobCard";
+import { OfferCard } from "@/components/OfferCard";
 import { useColors } from "@/hooks/useColors";
+import { useDispatch } from "@/context/DispatchContext";
 import { useWorker } from "@/context/WorkerContext";
+import { useAuth } from "@/context/AuthContext";
 import { SERVICE_CATEGORIES } from "@/constants/services";
+import { fetchEarningsSummary } from "@/services/earningsApi";
+import { JobOffer } from "@/types/dispatch";
 
 export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { worker, isOnline, toggleOnline, pendingJobs, activeJobs } = useWorker();
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const { worker } = useWorker();
+  const { fullName } = useAuth();
+
+  const displayName = fullName || worker.name || "Worker";
+  const {
+    isOnline,
+    offers,
+    activeJobs,
+    setOnline,
+    acceptOffer,
+    declineOffer,
+    completeJob,
+  } = useDispatch();
+  const [toggling, setToggling] = useState(false);
+  const [walletBalance, setWalletBalance] = useState<number | null>(null);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
+
+  // Refetch on every focus so it's current after e.g. completing a job on
+  // another tab — walletBalance is period-independent, "week" is arbitrary.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      fetchEarningsSummary("week")
+        .then((summary) => {
+          if (!cancelled) setWalletBalance(summary.walletBalance);
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
+    }, []),
+  );
+
+  const handleToggleOnline = async (next: boolean) => {
+    if (toggling) return;
+    setToggling(true);
+    try {
+      await setOnline(next);
+    } catch (e) {
+      Alert.alert(
+        "Couldn't go online",
+        e instanceof Error ? e.message : "Please try again.",
+      );
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  const handleAccept = async (offer: JobOffer) => {
+    const res = await acceptOffer(offer.id);
+    if (!res.ok) {
+      Alert.alert(
+        "Missed it",
+        res.message ?? "This job is no longer available.",
+      );
+    }
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -39,12 +100,16 @@ export default function HomeScreen() {
         <View style={styles.headerLeft}>
           <View style={[styles.avatar, { backgroundColor: colors.accent }]}>
             <Text style={[styles.avatarText, { color: colors.primary }]}>
-              {worker.name.charAt(0)}
+              {displayName.charAt(0).toUpperCase()}
             </Text>
           </View>
           <View>
-            <Text style={[styles.greeting, { color: colors.mutedForeground }]}>Good morning</Text>
-            <Text style={[styles.workerName, { color: colors.text }]}>{worker.name}</Text>
+            <Text style={[styles.greeting, { color: colors.mutedForeground }]}>
+              Good morning
+            </Text>
+            <Text style={[styles.workerName, { color: colors.text }]}>
+              {displayName}
+            </Text>
           </View>
         </View>
         <View style={styles.headerRight}>
@@ -55,17 +120,16 @@ export default function HomeScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={[
-          styles.scroll,
-          { paddingBottom: Platform.OS === "web" ? 100 : 100 },
-        ]}
+        contentContainerStyle={[styles.scroll, { paddingBottom: 128 }]}
         showsVerticalScrollIndicator={false}
       >
         <View
           style={[
             styles.onlineCard,
             {
-              backgroundColor: isOnline ? "#0F2027" : colors.secondary,
+              backgroundColor: isOnline
+                ? colors.heroBackground
+                : colors.secondary,
               shadowColor: isOnline ? colors.primary : "#000",
             },
           ]}
@@ -75,47 +139,90 @@ export default function HomeScreen() {
               <View
                 style={[
                   styles.onlineDot,
-                  { backgroundColor: isOnline ? colors.online : colors.offline },
+                  {
+                    backgroundColor: isOnline ? colors.online : colors.offline,
+                  },
                 ]}
               />
-              <Text style={[styles.onlineStatus, { color: isOnline ? "#fff" : colors.text }]}>
+              <Text
+                style={[
+                  styles.onlineStatus,
+                  { color: isOnline ? "#fff" : colors.text },
+                ]}
+              >
                 {isOnline ? "You're Online" : "You're Offline"}
               </Text>
             </View>
             <Text
               style={[
                 styles.onlineSubtext,
-                { color: isOnline ? "rgba(255,255,255,0.6)" : colors.mutedForeground },
+                {
+                  color: isOnline
+                    ? "rgba(255,255,255,0.6)"
+                    : colors.mutedForeground,
+                },
               ]}
             >
               {isOnline
-                ? `${pendingJobs.length} new request${pendingJobs.length !== 1 ? "s" : ""} near you`
+                ? `${offers.length} new request${offers.length !== 1 ? "s" : ""} near you`
                 : "Go online to receive job requests"}
             </Text>
           </View>
           <Switch
             value={isOnline}
-            onValueChange={toggleOnline}
+            onValueChange={handleToggleOnline}
+            disabled={toggling}
             trackColor={{ false: colors.border, true: colors.primary }}
             thumbColor="#fff"
           />
         </View>
 
         <View style={styles.statsRow}>
-          <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View
+            style={[
+              styles.statCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
+            ]}
+          >
             <Feather name="dollar-sign" size={18} color={colors.primary} />
-            <Text style={[styles.statValue, { color: colors.text }]}>₹{worker.balance.toLocaleString()}</Text>
-            <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Wallet</Text>
+            {walletBalance == null ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Text style={[styles.statValue, { color: colors.text }]}>
+                ₹{walletBalance.toLocaleString("en-IN")}
+              </Text>
+            )}
+            <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
+              Wallet
+            </Text>
           </View>
-          <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View
+            style={[
+              styles.statCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
+            ]}
+          >
             <Feather name="star" size={18} color="#F59E0B" />
-            <Text style={[styles.statValue, { color: colors.text }]}>{worker.rating}</Text>
-            <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Rating</Text>
+            <Text style={[styles.statValue, { color: colors.text }]}>
+              {worker.rating}
+            </Text>
+            <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
+              Rating
+            </Text>
           </View>
-          <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View
+            style={[
+              styles.statCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
+            ]}
+          >
             <Feather name="check-circle" size={18} color={colors.success} />
-            <Text style={[styles.statValue, { color: colors.text }]}>{worker.totalJobs}</Text>
-            <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Total Jobs</Text>
+            <Text style={[styles.statValue, { color: colors.text }]}>
+              {worker.totalJobs}
+            </Text>
+            <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
+              Total Jobs
+            </Text>
           </View>
         </View>
 
@@ -123,24 +230,45 @@ export default function HomeScreen() {
           <>
             <SectionHeader title="Active Job" icon="activity" colors={colors} />
             {activeJobs.map((job) => (
-              <JobCard key={job.id} job={job} />
+              <ActiveJobCard
+                key={job.id}
+                job={job}
+                onComplete={(j) => completeJob(j.id)}
+              />
             ))}
           </>
         )}
 
-        {isOnline && pendingJobs.length > 0 && (
+        {isOnline && offers.length > 0 && (
           <>
-            <SectionHeader title="New Requests" icon="bell" colors={colors} count={pendingJobs.length} />
-            {pendingJobs.map((job) => (
-              <JobCard key={job.id} job={job} showTimer />
+            <SectionHeader
+              title="New Requests"
+              icon="bell"
+              colors={colors}
+              count={offers.length}
+            />
+            {offers.map((offer) => (
+              <OfferCard
+                key={offer.id}
+                offer={offer}
+                onAccept={handleAccept}
+                onDecline={(o) => declineOffer(o.id)}
+              />
             ))}
           </>
         )}
 
-        {isOnline && pendingJobs.length === 0 && activeJobs.length === 0 && (
-          <View style={[styles.emptyCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        {isOnline && offers.length === 0 && activeJobs.length === 0 && (
+          <View
+            style={[
+              styles.emptyCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
+            ]}
+          >
             <Feather name="search" size={36} color={colors.mutedForeground} />
-            <Text style={[styles.emptyTitle, { color: colors.text }]}>Searching for jobs…</Text>
+            <Text style={[styles.emptyTitle, { color: colors.text }]}>
+              Searching for jobs…
+            </Text>
             <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
               New requests matching your expertise will appear here
             </Text>
@@ -163,7 +291,11 @@ export default function HomeScreen() {
                   },
                 ]}
               >
-                <Feather name={cat.icon as any} size={14} color={active ? cat.color : colors.mutedForeground} />
+                <Feather
+                  name={cat.icon as any}
+                  size={14}
+                  color={active ? cat.color : colors.mutedForeground}
+                />
                 <Text
                   style={[
                     styles.categoryText,
@@ -244,12 +376,21 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 20,
     ...Platform.select({
-      ios: { shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12 },
+      ios: {
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+      },
       android: { elevation: 4 },
     }),
   },
   onlineLeft: { flex: 1 },
-  onlineIndicatorRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
+  onlineIndicatorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
   onlineDot: { width: 10, height: 10, borderRadius: 5 },
   onlineStatus: { fontSize: 18, fontFamily: "Inter_700Bold" },
   onlineSubtext: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 2 },
@@ -266,7 +407,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
     ...Platform.select({
-      ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4 },
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+      },
       android: { elevation: 1 },
     }),
   },
@@ -297,7 +443,11 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   emptyTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
-  emptyText: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },
+  emptyText: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+  },
   categoryGrid: {
     flexDirection: "row",
     flexWrap: "wrap",

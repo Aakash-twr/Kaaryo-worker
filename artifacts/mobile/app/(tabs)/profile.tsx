@@ -1,166 +1,872 @@
 import { Feather } from "@expo/vector-icons";
-import * as Haptics from "expo-haptics";
-import React from "react";
+import * as ImagePicker from "expo-image-picker";
+import React, { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Image,
+  Modal,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { PickerModal } from "@/components/onboarding/PickerModal";
+import { absoluteUrl } from "@/constants/config";
+import { getServiceById } from "@/constants/services";
+import { useAuth } from "@/context/AuthContext";
+import { useOnboarding } from "@/context/OnboardingContext";
+import { useTheme, ThemeMode } from "@/context/ThemeContext";
 import { useColors } from "@/hooks/useColors";
-import { useWorker } from "@/context/WorkerContext";
-import { SERVICE_CATEGORIES } from "@/constants/services";
+import { ApiError } from "@/services/apiClient";
+import { fetchCities } from "@/services/onboardingApi";
+import {
+  fetchProfile,
+  updateExpertise,
+  updateProfile,
+} from "@/services/profileApi";
+import { ProfileData, ProfileExpertiseCategory } from "@/types/profile";
 
 export default function ProfileScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { worker, toggleExpertise } = useWorker();
+  const { logout, hardReset } = useAuth();
+  const { reset: resetOnboarding } = useOnboarding();
+
+  const [profile, setProfile] = useState<ProfileData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [editVisible, setEditVisible] = useState(false);
+
+  const load = async (opts?: { silent?: boolean }) => {
+    if (opts?.silent) setRefreshing(true);
+    else setLoading(true);
+    setError(null);
+    try {
+      const p = await fetchProfile();
+      setProfile(p);
+    } catch (e) {
+      setError(
+        e instanceof ApiError ? e.message : "Couldn't load your profile.",
+      );
+    } finally {
+      if (opts?.silent) setRefreshing(false);
+      else setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const handleLogout = () => logout();
+
+  const handleResetTestData = () => {
+    Alert.alert(
+      "Reset test data?",
+      "This clears every mock account and onboarding draft on this device. You'll be signed out.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset",
+          style: "destructive",
+          onPress: async () => {
+            resetOnboarding();
+            await hardReset();
+          },
+        },
+      ],
+    );
+  };
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
-  const handleToggle = async (categoryId: string) => {
-    if (Platform.OS !== "web") await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    toggleExpertise(categoryId);
-  };
+  if (loading) {
+    return (
+      <View style={[styles.center, { backgroundColor: colors.background }]}>
+        <ActivityIndicator color={colors.primary} />
+      </View>
+    );
+  }
+
+  if (error || !profile) {
+    return (
+      <View
+        style={[
+          styles.center,
+          { backgroundColor: colors.background, paddingHorizontal: 32 },
+        ]}
+      >
+        <Feather name="wifi-off" size={32} color={colors.mutedForeground} />
+        <Text style={[styles.errorTitle, { color: colors.text }]}>
+          Couldn't load your profile
+        </Text>
+        <Text style={[styles.errorBody, { color: colors.mutedForeground }]}>
+          {error}
+        </Text>
+        <Pressable
+          style={[styles.retryBtn, { backgroundColor: colors.primary }]}
+          onPress={() => load()}
+        >
+          <Text style={styles.retryText}>Try Again</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const photoUri = absoluteUrl(profile.photoUrl);
+  // The worker only ever picks one role during onboarding — only show that
+  // category here, not the other 7 the account isn't set up for.
+  const myCategory = profile.expertise.find((cat) => cat.active) ?? null;
 
   const settings = [
-    { icon: "map-pin", label: "Service Area", value: worker.city },
-    { icon: "phone", label: "Phone", value: worker.phone },
+    {
+      icon: "map-pin",
+      label: "Service Area",
+      value: profile.account.serviceArea,
+    },
+    { icon: "phone", label: "Phone", value: profile.account.phone },
     { icon: "help-circle", label: "Help & Support", value: "" },
     { icon: "file-text", label: "Terms & Privacy", value: "" },
     { icon: "star", label: "Rate the App", value: "" },
-  ];
+    ...(__DEV__
+      ? [
+          {
+            icon: "refresh-ccw",
+            label: "Reset Test Data",
+            value: "",
+            dev: true,
+            onPress: handleResetTestData,
+          },
+        ]
+      : []),
+  ] as {
+    icon: string;
+    label: string;
+    value: string;
+    dev?: boolean;
+    onPress?: () => void;
+  }[];
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View
         style={[
           styles.header,
-          { paddingTop: topPad + 8, backgroundColor: colors.card, borderBottomColor: colors.border },
+          {
+            paddingTop: topPad + 8,
+            backgroundColor: colors.card,
+            borderBottomColor: colors.border,
+          },
         ]}
       >
         <Text style={[styles.title, { color: colors.text }]}>Profile</Text>
-        <Pressable style={[styles.editBtn, { borderColor: colors.border }]}>
+        <Pressable
+          style={[styles.editBtn, { borderColor: colors.border }]}
+          onPress={() => setEditVisible(true)}
+        >
           <Feather name="edit-2" size={16} color={colors.text} />
           <Text style={[styles.editLabel, { color: colors.text }]}>Edit</Text>
         </Pressable>
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: Platform.OS === "web" ? 100 : 100 }]}
+        contentContainerStyle={[styles.scroll, { paddingBottom: 128 }]}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => load({ silent: true })}
+            tintColor={colors.primary}
+          />
+        }
       >
-        <View style={[styles.profileCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <View style={[styles.avatarLarge, { backgroundColor: colors.accent }]}>
-            <Text style={[styles.avatarLargeText, { color: colors.primary }]}>
-              {worker.name.charAt(0)}
-            </Text>
-          </View>
-          <Text style={[styles.workerName, { color: colors.text }]}>{worker.name}</Text>
-          <Text style={[styles.workerCity, { color: colors.mutedForeground }]}>{worker.city}</Text>
+        <View
+          style={[
+            styles.profileCard,
+            { backgroundColor: colors.card, borderColor: colors.border },
+          ]}
+        >
+          {photoUri ? (
+            <Image source={{ uri: photoUri }} style={styles.avatarLarge} />
+          ) : (
+            <View
+              style={[
+                styles.avatarLarge,
+                styles.avatarFallback,
+                { backgroundColor: colors.accent },
+              ]}
+            >
+              <Text style={[styles.avatarLargeText, { color: colors.primary }]}>
+                {profile.displayInitial}
+              </Text>
+            </View>
+          )}
+          <Text style={[styles.workerName, { color: colors.text }]}>
+            {profile.fullName}
+          </Text>
+          <Text style={[styles.workerCity, { color: colors.mutedForeground }]}>
+            {profile.city}
+          </Text>
           <View style={styles.badgeRow}>
             <View style={[styles.badge, { backgroundColor: colors.accent }]}>
               <Feather name="star" size={13} color={colors.primary} />
-              <Text style={[styles.badgeText, { color: colors.primary }]}>{worker.rating} Rating</Text>
+              <Text style={[styles.badgeText, { color: colors.primary }]}>
+                {profile.rating != null ? `${profile.rating} Rating` : "New"}
+              </Text>
             </View>
-            <View style={[styles.badge, { backgroundColor: colors.successLight }]}>
+            <View
+              style={[styles.badge, { backgroundColor: colors.successLight }]}
+            >
               <Feather name="check-circle" size={13} color={colors.success} />
-              <Text style={[styles.badgeText, { color: colors.success }]}>{worker.totalJobs} Jobs Done</Text>
+              <Text style={[styles.badgeText, { color: colors.success }]}>
+                {profile.jobsCompleted} Jobs Done
+              </Text>
             </View>
           </View>
         </View>
 
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>My Expertise</Text>
-        <Text style={[styles.sectionSub, { color: colors.mutedForeground }]}>
-          Toggle the services you offer. You'll only receive requests for active services.
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>
+          My Expertise
         </Text>
-        <View style={styles.expertiseGrid}>
-          {SERVICE_CATEGORIES.map((cat) => {
-            const active = worker.expertise.includes(cat.id);
-            return (
-              <Pressable
-                key={cat.id}
-                style={[
-                  styles.expertiseCard,
-                  {
-                    backgroundColor: active ? cat.lightColor : colors.card,
-                    borderColor: active ? cat.color : colors.border,
-                    borderWidth: active ? 1.5 : 1,
-                  },
-                ]}
-                onPress={() => handleToggle(cat.id)}
-              >
-                <View
-                  style={[
-                    styles.expertiseIconWrap,
-                    { backgroundColor: active ? cat.color : colors.secondary },
-                  ]}
-                >
-                  <Feather
-                    name={cat.icon as any}
-                    size={18}
-                    color={active ? "#fff" : colors.mutedForeground}
-                  />
-                </View>
-                <Text
-                  style={[
-                    styles.expertiseName,
-                    { color: active ? cat.color : colors.text },
-                  ]}
-                >
-                  {cat.name}
-                </Text>
-                <View
-                  style={[
-                    styles.expertiseCheck,
-                    {
-                      backgroundColor: active ? cat.color : colors.secondary,
-                    },
-                  ]}
-                >
-                  <Feather name={active ? "check" : "plus"} size={12} color={active ? "#fff" : colors.mutedForeground} />
-                </View>
-              </Pressable>
-            );
-          })}
-        </View>
+        {myCategory ? (
+          <MyExpertiseSection category={myCategory} onSaved={setProfile} />
+        ) : (
+          <Text
+            style={[
+              styles.sectionSub,
+              { color: colors.mutedForeground, marginBottom: 24 },
+            ]}
+          >
+            No expertise selected yet.
+          </Text>
+        )}
 
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Account</Text>
-        <View style={[styles.settingsCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>
+          Account
+        </Text>
+        <View
+          style={[
+            styles.settingsCard,
+            { backgroundColor: colors.card, borderColor: colors.border },
+          ]}
+        >
           {settings.map((item, i) => (
             <Pressable
               key={item.label}
               style={[
                 styles.settingsRow,
-                i < settings.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border },
+                i < settings.length - 1 && {
+                  borderBottomWidth: 1,
+                  borderBottomColor: colors.border,
+                },
               ]}
+              onPress={item.onPress}
             >
-              <View style={[styles.settingsIcon, { backgroundColor: colors.secondary }]}>
-                <Feather name={item.icon as any} size={16} color={colors.text} />
+              <View
+                style={[
+                  styles.settingsIcon,
+                  {
+                    backgroundColor: item.dev
+                      ? colors.warningLight
+                      : colors.secondary,
+                  },
+                ]}
+              >
+                <Feather
+                  name={item.icon as any}
+                  size={16}
+                  color={item.dev ? colors.warning : colors.text}
+                />
               </View>
-              <Text style={[styles.settingsLabel, { color: colors.text }]}>{item.label}</Text>
+              <Text
+                style={[
+                  styles.settingsLabel,
+                  { color: item.dev ? colors.warning : colors.text },
+                ]}
+              >
+                {item.label}
+              </Text>
               {item.value ? (
-                <Text style={[styles.settingsValue, { color: colors.mutedForeground }]}>{item.value}</Text>
+                <Text
+                  style={[
+                    styles.settingsValue,
+                    { color: colors.mutedForeground },
+                  ]}
+                >
+                  {item.value}
+                </Text>
               ) : null}
-              <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+              {!item.dev && (
+                <Feather
+                  name="chevron-right"
+                  size={16}
+                  color={colors.mutedForeground}
+                />
+              )}
             </Pressable>
           ))}
         </View>
 
-        <Pressable style={[styles.logoutBtn, { borderColor: colors.destructive }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>
+          Appearance
+        </Text>
+        <ThemeToggleCard />
+
+        <Pressable
+          style={[styles.logoutBtn, { borderColor: colors.destructive }]}
+          onPress={handleLogout}
+        >
           <Feather name="log-out" size={16} color={colors.destructive} />
-          <Text style={[styles.logoutText, { color: colors.destructive }]}>Log Out</Text>
+          <Text style={[styles.logoutText, { color: colors.destructive }]}>
+            Log Out
+          </Text>
         </Pressable>
       </ScrollView>
+
+      <EditProfileModal
+        visible={editVisible}
+        profile={profile}
+        onClose={() => setEditVisible(false)}
+        onSaved={setProfile}
+      />
     </View>
+  );
+}
+
+/**
+ * Shows the worker's one chosen category (e.g. "Cleaning") and its
+ * sub-services as a multi-select list — same chip + accent-color language as
+ * the onboarding skill picker, not a new visual pattern. Toggling a chip only
+ * edits a local draft; nothing is sent until "Update Expertise" is tapped, so
+ * a run of taps costs one network call instead of one per tap.
+ */
+function MyExpertiseSection({
+  category,
+  onSaved,
+}: {
+  category: ProfileExpertiseCategory;
+  onSaved: (p: ProfileData) => void;
+}) {
+  const colors = useColors();
+  const meta = getServiceById(category.category);
+  const [draft, setDraft] = useState<Record<string, boolean>>({});
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const initial: Record<string, boolean> = {};
+    category.subcategories.forEach((s) => {
+      initial[s.key] = s.active;
+    });
+    setDraft(initial);
+    setError(null);
+    setSaved(false);
+  }, [category]);
+
+  const toggle = (key: string) => {
+    setDraft((prev) => ({ ...prev, [key]: !prev[key] }));
+    setError(null);
+    setSaved(false);
+  };
+
+  const isDirty = category.subcategories.some(
+    (s) => !!draft[s.key] !== s.active,
+  );
+  const activeCount = Object.values(draft).filter(Boolean).length;
+  const totalCount = category.subcategories.length;
+  const progressPercent = totalCount > 0 ? (activeCount / totalCount) * 100 : 0;
+
+  const handleUpdate = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const subcategories = category.subcategories
+        .filter((s) => draft[s.key])
+        .map((s) => s.key);
+      const payload = subcategories.length
+        ? [{ category: category.category, subcategories }]
+        : [];
+      const updated = await updateExpertise(payload);
+      onSaved(updated);
+      setSaved(true);
+    } catch (e) {
+      setError(
+        e instanceof ApiError
+          ? e.message
+          : "Couldn't update your expertise. Please try again.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <View style={styles.expSection}>
+      <View
+        style={[
+          styles.premiumCard,
+          { backgroundColor: colors.card, borderColor: colors.border },
+        ]}
+      >
+        <View style={styles.premiumHeader}>
+          <View style={[styles.premiumIconWrap, { backgroundColor: colors.accent }]}>
+            <Feather
+              name={(meta?.icon ?? "grid") as any}
+              size={24}
+              color={colors.primary}
+            />
+          </View>
+          <View style={styles.premiumHeaderTextWrap}>
+            <Text style={[styles.premiumHeaderTitle, { color: colors.text }]}>
+              {category.name}
+            </Text>
+            <Text style={[styles.premiumHeaderSubtitle, { color: colors.mutedForeground }]}>
+              {activeCount} of {totalCount} skills selected
+            </Text>
+          </View>
+          <View style={[styles.premiumBadge, { backgroundColor: colors.accent }]}>
+            <Text style={[styles.premiumBadgeText, { color: colors.primary }]}>
+              {Math.round(progressPercent)}%
+            </Text>
+          </View>
+        </View>
+
+        <View style={[styles.premiumDivider, { backgroundColor: colors.border }]} />
+
+        <View style={styles.premiumBody}>
+          <Text style={[styles.premiumListLabel, { color: colors.text }]}>
+            Specializations
+          </Text>
+          <Text style={[styles.premiumListSublabel, { color: colors.mutedForeground }]}>
+            Tap to select the services you excel at providing.
+          </Text>
+          
+          <View style={styles.servicesList}>
+            {category.subcategories.map((sub, index) => {
+              const selected = !!draft[sub.key];
+              const isLast = index === category.subcategories.length - 1;
+              return (
+                <Pressable
+                  key={sub.key}
+                  onPress={() => toggle(sub.key)}
+                  style={[
+                    styles.serviceRow,
+                    !isLast && { 
+                      borderBottomWidth: StyleSheet.hairlineWidth, 
+                      borderBottomColor: colors.border 
+                    }
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.serviceRowText,
+                      {
+                        color: selected ? colors.text : colors.mutedForeground,
+                        fontFamily: selected ? "Inter_600SemiBold" : "Inter_400Regular",
+                      },
+                    ]}
+                  >
+                    {sub.name}
+                  </Text>
+                  {selected && (
+                    <Feather name="check" size={18} color={colors.primary} />
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        {error && (
+          <View style={styles.premiumErrorWrap}>
+            <Feather name="alert-circle" size={14} color={colors.destructive} />
+            <Text style={[styles.premiumError, { color: colors.destructive }]}>
+              {error}
+            </Text>
+          </View>
+        )}
+
+        {isDirty && (
+          <View style={styles.premiumActionWrap}>
+            <Pressable
+              style={[
+                styles.premiumUpdateBtn,
+                { backgroundColor: colors.primary },
+                saving && { opacity: 0.7 }
+              ]}
+              onPress={handleUpdate}
+              disabled={saving}
+            >
+              {saving ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <>
+                  <Text style={styles.premiumUpdateText}>Save Expertise</Text>
+                  <Feather name="arrow-right" size={16} color="#fff" />
+                </>
+              )}
+            </Pressable>
+          </View>
+        )}
+
+        {saved && !isDirty && (
+          <View style={styles.premiumActionWrap}>
+            <View style={[styles.premiumSavedRow, { backgroundColor: colors.successLight }]}>
+              <Feather name="check-circle" size={16} color={colors.success} />
+              <Text style={[styles.premiumSavedText, { color: colors.success }]}>
+                Expertise successfully updated
+              </Text>
+            </View>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * A polished three-option toggle card for switching between Light, Dark, and
+ * System appearance modes. Uses the ThemeContext to persist the user's choice.
+ */
+function ThemeToggleCard() {
+  const colors = useColors();
+  const { mode, setMode, colorScheme } = useTheme();
+
+  const options: { id: ThemeMode; label: string; icon: string }[] = [
+    { id: "light", label: "Light", icon: "sun" },
+    { id: "dark", label: "Dark", icon: "moon" },
+    { id: "system", label: "System", icon: "smartphone" },
+  ];
+
+  return (
+    <View
+      style={[
+        styles.themeCard,
+        { backgroundColor: colors.card, borderColor: colors.border },
+      ]}
+    >
+      <View style={styles.themeHeader}>
+        <View style={[styles.themeIconWrap, { backgroundColor: colors.accent }]}>
+          <Feather
+            name={colorScheme === "dark" ? "moon" : "sun"}
+            size={20}
+            color={colors.primary}
+          />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.themeTitle, { color: colors.text }]}>Theme</Text>
+          <Text style={[styles.themeSub, { color: colors.mutedForeground }]}>
+            {mode === "system"
+              ? `System (${colorScheme === "dark" ? "Dark" : "Light"})`
+              : mode === "dark"
+                ? "Dark Mode"
+                : "Light Mode"}
+          </Text>
+        </View>
+      </View>
+
+      <View style={[styles.themeOptions, { backgroundColor: colors.secondary }]}>
+        {options.map((opt) => {
+          const active = mode === opt.id;
+          return (
+            <Pressable
+              key={opt.id}
+              style={[
+                styles.themeOption,
+                active && {
+                  backgroundColor: colors.card,
+                  ...Platform.select({
+                    ios: {
+                      shadowColor: "#000",
+                      shadowOffset: { width: 0, height: 1 },
+                      shadowOpacity: 0.1,
+                      shadowRadius: 4,
+                    },
+                    android: { elevation: 2 },
+                  }),
+                },
+              ]}
+              onPress={() => setMode(opt.id)}
+            >
+              <Feather
+                name={opt.icon as any}
+                size={15}
+                color={active ? colors.primary : colors.mutedForeground}
+              />
+              <Text
+                style={[
+                  styles.themeOptionText,
+                  {
+                    color: active ? colors.primary : colors.mutedForeground,
+                    fontFamily: active ? "Inter_600SemiBold" : "Inter_400Regular",
+                  },
+                ]}
+              >
+                {opt.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function EditProfileModal({
+  visible,
+  profile,
+  onClose,
+  onSaved,
+}: {
+  visible: boolean;
+  profile: ProfileData;
+  onClose: () => void;
+  onSaved: (p: ProfileData) => void;
+}) {
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+
+  const [fullName, setFullName] = useState(profile.fullName);
+  const [city, setCity] = useState(profile.city);
+  const [cities, setCities] = useState<string[]>([]);
+  const [cityPickerOpen, setCityPickerOpen] = useState(false);
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [photoMimeType, setPhotoMimeType] = useState<string | undefined>(
+    undefined,
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!visible) return;
+    setFullName(profile.fullName);
+    setCity(profile.city);
+    setPhotoUri(null);
+    setPhotoMimeType(undefined);
+    setError(null);
+    fetchCities()
+      .then(setCities)
+      .catch(() => {});
+  }, [visible, profile]);
+
+  const captureFrom = async (source: "camera" | "library") => {
+    const perm =
+      source === "camera"
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const result =
+      source === "camera"
+        ? await ImagePicker.launchCameraAsync({
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.7,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.7,
+            mediaTypes: ["images"],
+          });
+    if (!result.canceled && result.assets?.[0]) {
+      setPhotoUri(result.assets[0].uri);
+      setPhotoMimeType(result.assets[0].mimeType);
+    }
+  };
+
+  const pickPhoto = () => {
+    Alert.alert("Change Profile Photo", undefined, [
+      { text: "Take Photo", onPress: () => captureFrom("camera") },
+      { text: "Choose from Library", onPress: () => captureFrom("library") },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
+
+  const hasChanges =
+    fullName.trim() !== profile.fullName || city !== profile.city || !!photoUri;
+  const canSave = hasChanges && fullName.trim().length > 0;
+
+  const handleSave = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await updateProfile({
+        fullName:
+          fullName.trim() !== profile.fullName ? fullName.trim() : undefined,
+        city: city !== profile.city ? city : undefined,
+        photoUri: photoUri ?? undefined,
+        photoMimeType,
+      });
+      onSaved(updated);
+      onClose();
+    } catch (e) {
+      setError(
+        e instanceof ApiError
+          ? e.message
+          : "Couldn't save changes. Please try again.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const previewUri = photoUri ?? absoluteUrl(profile.photoUrl);
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
+      <Pressable style={styles.modalBackdrop} onPress={onClose} />
+      <View
+        style={[
+          styles.modalSheet,
+          { backgroundColor: colors.card, paddingBottom: insets.bottom + 20 },
+        ]}
+      >
+        <View
+          style={[styles.modalHandle, { backgroundColor: colors.border }]}
+        />
+        <View style={styles.modalHeaderRow}>
+          <Text style={[styles.modalTitle, { color: colors.text }]}>
+            Edit Profile
+          </Text>
+          <Pressable onPress={onClose} hitSlop={8}>
+            <Feather name="x" size={20} color={colors.mutedForeground} />
+          </Pressable>
+        </View>
+
+        <Pressable style={styles.modalAvatarWrap} onPress={pickPhoto}>
+          {previewUri ? (
+            <Image source={{ uri: previewUri }} style={styles.modalAvatar} />
+          ) : (
+            <View
+              style={[
+                styles.modalAvatar,
+                styles.avatarFallback,
+                { backgroundColor: colors.accent },
+              ]}
+            >
+              <Text
+                style={[styles.modalAvatarInitial, { color: colors.primary }]}
+              >
+                {profile.displayInitial}
+              </Text>
+            </View>
+          )}
+          <View
+            style={[
+              styles.modalAvatarEditBadge,
+              { backgroundColor: colors.primary, borderColor: colors.card },
+            ]}
+          >
+            <Feather name="camera" size={13} color="#fff" />
+          </View>
+        </Pressable>
+
+        <View style={styles.modalField}>
+          <Text style={[styles.modalLabel, { color: colors.text }]}>
+            Full Name
+          </Text>
+          <TextInput
+            style={[
+              styles.modalInput,
+              {
+                backgroundColor: colors.background,
+                borderColor: colors.input,
+                color: colors.text,
+              },
+            ]}
+            value={fullName}
+            onChangeText={setFullName}
+            autoCapitalize="words"
+          />
+        </View>
+
+        <View style={styles.modalField}>
+          <Text style={[styles.modalLabel, { color: colors.text }]}>
+            Service Area (City)
+          </Text>
+          <Pressable
+            style={[
+              styles.modalSelect,
+              { backgroundColor: colors.background, borderColor: colors.input },
+            ]}
+            onPress={() => setCityPickerOpen(true)}
+          >
+            <Text style={[styles.modalSelectText, { color: colors.text }]}>
+              {city}
+            </Text>
+            <Feather
+              name="chevron-down"
+              size={16}
+              color={colors.mutedForeground}
+            />
+          </Pressable>
+        </View>
+
+        {error && (
+          <Text style={[styles.modalError, { color: colors.destructive }]}>
+            {error}
+          </Text>
+        )}
+
+        <Pressable
+          style={[
+            styles.modalSaveBtn,
+            { backgroundColor: colors.primary, opacity: canSave ? 1 : 0.5 },
+          ]}
+          onPress={handleSave}
+          disabled={!canSave || saving}
+        >
+          {saving ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.modalSaveText}>Save Changes</Text>
+          )}
+        </Pressable>
+      </View>
+
+      <PickerModal
+        visible={cityPickerOpen}
+        title="Select City"
+        options={cities.map((c) => ({ label: c, value: c }))}
+        onSelect={setCity}
+        onClose={() => setCityPickerOpen(false)}
+      />
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
+  errorTitle: { fontSize: 16, fontFamily: "Inter_700Bold", marginTop: 8 },
+  errorBody: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+  },
+  retryBtn: {
+    marginTop: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  retryText: { color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold" },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -189,18 +895,17 @@ const styles = StyleSheet.create({
     gap: 6,
     marginBottom: 24,
     ...Platform.select({
-      ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 },
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+      },
       android: { elevation: 2 },
     }),
   },
-  avatarLarge: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 6,
-  },
+  avatarLarge: { width: 72, height: 72, borderRadius: 36, marginBottom: 6 },
+  avatarFallback: { alignItems: "center", justifyContent: "center" },
   avatarLargeText: { fontSize: 30, fontFamily: "Inter_700Bold" },
   workerName: { fontSize: 20, fontFamily: "Inter_700Bold" },
   workerCity: { fontSize: 14, fontFamily: "Inter_400Regular", marginBottom: 8 },
@@ -214,42 +919,104 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   badgeText: { fontSize: 12, fontFamily: "Inter_500Medium" },
-  sectionTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold", marginBottom: 4 },
-  sectionSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginBottom: 14 },
-  expertiseGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginBottom: 24,
+  sectionTitle: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    marginBottom: 4,
   },
-  expertiseCard: {
-    width: "47%",
-    borderRadius: 14,
-    padding: 14,
-    gap: 8,
+  sectionSub: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    marginBottom: 14,
+  },
+  expSection: { marginBottom: 24, marginTop: 8 },
+  premiumCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    overflow: "hidden",
     ...Platform.select({
-      ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4 },
-      android: { elevation: 1 },
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
+      },
+      android: { elevation: 3 },
     }),
   },
-  expertiseIconWrap: {
-    width: 38,
-    height: 38,
+  premiumHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 20,
+    gap: 16,
+  },
+  premiumIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  premiumHeaderTextWrap: { flex: 1 },
+  premiumHeaderTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 4 },
+  premiumHeaderSubtitle: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  premiumBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 12,
+  },
+  premiumBadgeText: { fontSize: 12, fontFamily: "Inter_700Bold" },
+  premiumDivider: { height: 1, width: "100%" },
+  premiumBody: { padding: 20 },
+  premiumListLabel: { fontSize: 16, fontFamily: "Inter_600SemiBold", marginBottom: 4 },
+  premiumListSublabel: { fontSize: 13, fontFamily: "Inter_400Regular", marginBottom: 16 },
+  servicesList: {
+    marginTop: 4,
+  },
+  serviceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 16,
+    paddingHorizontal: 4,
+  },
+  serviceRowText: {
+    fontSize: 15,
+  },
+  premiumErrorWrap: {
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 6,
+    paddingHorizontal: 20,
+    paddingBottom: 16,
   },
-  expertiseName: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  expertiseCheck: {
-    position: "absolute",
-    top: 10,
-    right: 10,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+  premiumError: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+  },
+  premiumActionWrap: {
+    padding: 20,
+    paddingTop: 0,
+  },
+  premiumUpdateBtn: {
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 8,
+    height: 52,
+    borderRadius: 16,
   },
+  premiumUpdateText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  premiumSavedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    height: 52,
+    borderRadius: 16,
+  },
+  premiumSavedText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   settingsCard: {
     borderRadius: 16,
     borderWidth: 1,
@@ -282,4 +1049,111 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   logoutText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  themeCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 20,
+    marginBottom: 24,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+      },
+      android: { elevation: 2 },
+    }),
+  },
+  themeHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 16,
+  },
+  themeIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  themeTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
+  themeSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  themeOptions: {
+    flexDirection: "row",
+    borderRadius: 12,
+    padding: 4,
+    gap: 4,
+  },
+  themeOption: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  themeOptionText: { fontSize: 13 },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
+  modalSheet: {
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingHorizontal: 22,
+    paddingTop: 10,
+    gap: 18,
+  },
+  modalHandle: { width: 36, height: 4, borderRadius: 2, alignSelf: "center" },
+  modalHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  modalTitle: { fontSize: 17, fontFamily: "Inter_700Bold" },
+  modalAvatarWrap: { alignSelf: "center" },
+  modalAvatar: { width: 84, height: 84, borderRadius: 42 },
+  modalAvatarInitial: { fontSize: 32, fontFamily: "Inter_700Bold" },
+  modalAvatarEditBadge: {
+    position: "absolute",
+    bottom: -2,
+    right: -2,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalField: { gap: 8 },
+  modalLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  modalInput: {
+    height: 48,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+  },
+  modalSelect: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    height: 48,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+  },
+  modalSelectText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  modalError: {
+    fontSize: 12.5,
+    fontFamily: "Inter_500Medium",
+    textAlign: "center",
+  },
+  modalSaveBtn: {
+    height: 52,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalSaveText: { color: "#fff", fontSize: 15, fontFamily: "Inter_700Bold" },
 });
