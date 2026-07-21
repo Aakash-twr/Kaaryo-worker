@@ -170,6 +170,7 @@ export default function HomeScreen() {
                 ]}
               >
                 {isOnline ? "You're Online" : "You're Offline"}
+                {/* This is a dummy text to test the git problem */}
               </Text>
             </View>
             <Text
