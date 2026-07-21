@@ -10,6 +10,8 @@ export default function OnboardingLayout() {
       <Stack.Screen name="aadhaar" />
       <Stack.Screen name="face-match" />
       <Stack.Screen name="work-details" />
+      <Stack.Screen name="video-task" />
+      <Stack.Screen name="video-upload" />
       <Stack.Screen name="references" />
       <Stack.Screen name="consent" />
       <Stack.Screen name="submitted" />

@@ -70,7 +70,7 @@ export default function LocationScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <OnboardingProgress step={2} total={7} title="Where are you based?" onBack={() => router.back()} />
+      <OnboardingProgress step={2} total={8} title="Where are you based?" onBack={() => router.back()} />
       <ScrollView
         contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 140 }]}
         keyboardShouldPersistTaps="handled"

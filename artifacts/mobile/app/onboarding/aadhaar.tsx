@@ -101,7 +101,7 @@ export default function AadhaarScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <OnboardingProgress step={3} total={7} title="Verify your Aadhaar" onBack={() => router.back()} />
+      <OnboardingProgress step={3} total={8} title="Verify your Aadhaar" onBack={() => router.back()} />
       <ScrollView
         contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 140 }]}
         keyboardShouldPersistTaps="handled"

@@ -114,7 +114,7 @@ export default function ConsentScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <OnboardingProgress step={7} total={7} title="Background Check Consent" onBack={() => router.back()} />
+      <OnboardingProgress step={8} total={8} title="Background Check Consent" onBack={() => router.back()} />
       <ScrollView
         contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 140 }]}
         keyboardShouldPersistTaps="handled"

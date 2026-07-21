@@ -103,6 +103,7 @@ export const ONBOARDING_STEPS: OnboardingStepMeta[] = [
   { key: "aadhaar", title: "Aadhaar Verification" },
   { key: "face-match", title: "Selfie Verification" },
   { key: "work-details", title: "Work Details" },
+  { key: "video-task", title: "Skill Video Task" },
   { key: "references", title: "Reference Details" },
   { key: "consent", title: "Background Check Consent" },
 ];
@@ -171,7 +172,13 @@ export const STEP_TO_ROUTE: Record<string, string> = {
   location: "aadhaar",
   aadhaar: "face-match",
   face_match: "work-details",
-  work_details: "references",
+  work_details: "video-task",
+  // Practical video task sits between work details and references. Until the
+  // videos are confirmed the worker resumes on the upload screen (its status
+  // fetch restores any already-uploaded videos).
+  video_task: "video-upload",
+  video_upload: "video-upload",
+  video_review_pending: "references",
   references: "consent",
   consent: "submitted",
   submitted: "submitted",

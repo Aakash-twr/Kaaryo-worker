@@ -88,8 +88,8 @@ export default function WorkDetailsScreen() {
         preferredDays,
       });
       setOnboardingStep(res.onboardingStep);
-      setLastRoute("references");
-      router.push("/onboarding/references");
+      setLastRoute("video-task");
+      router.push("/onboarding/video-task" as any);
     } catch (e) {
       setApiError(e instanceof ApiError ? e.message : "Couldn't save your work details. Please try again.");
     } finally {
@@ -99,7 +99,7 @@ export default function WorkDetailsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <OnboardingProgress step={5} total={7} title="Your work details" onBack={() => router.back()} />
+      <OnboardingProgress step={5} total={8} title="Your work details" onBack={() => router.back()} />
       <ScrollView
         contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 140 }]}
         keyboardShouldPersistTaps="handled"

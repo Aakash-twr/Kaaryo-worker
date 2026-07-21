@@ -160,7 +160,7 @@ export default function PersonalDetailsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <OnboardingProgress step={1} total={7} title="Tell us about yourself" onBack={() => router.back()} />
+      <OnboardingProgress step={1} total={8} title="Tell us about yourself" onBack={() => router.back()} />
       <ScrollView
         contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 140 }]}
         keyboardShouldPersistTaps="handled"

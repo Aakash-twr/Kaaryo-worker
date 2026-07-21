@@ -91,7 +91,7 @@ export default function FaceMatchScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <OnboardingProgress step={4} total={7} title="Confirm it's really you" onBack={() => router.back()} />
+      <OnboardingProgress step={4} total={8} title="Confirm it's really you" onBack={() => router.back()} />
       <ScrollView
         contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 40 }]}
         showsVerticalScrollIndicator={false}

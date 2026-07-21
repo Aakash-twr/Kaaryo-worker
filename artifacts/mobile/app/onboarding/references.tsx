@@ -75,7 +75,7 @@ export default function ReferencesScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <OnboardingProgress step={6} total={7} title="Reference Details" onBack={() => router.back()} />
+      <OnboardingProgress step={7} total={8} title="Reference Details" onBack={() => router.back()} />
       <ScrollView
         contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 140 }]}
         keyboardShouldPersistTaps="handled"

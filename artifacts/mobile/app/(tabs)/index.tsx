@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,15 +21,34 @@ import { useWorker } from "@/context/WorkerContext";
 import { useAuth } from "@/context/AuthContext";
 import { SERVICE_CATEGORIES } from "@/constants/services";
 import { fetchEarningsSummary } from "@/services/earningsApi";
+import { fetchProfile } from "@/services/profileApi";
 import { JobOffer } from "@/types/dispatch";
+
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  if (hour < 21) return "Good evening";
+  return "Good night";
+}
 
 export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { worker } = useWorker();
   const { fullName } = useAuth();
+  const [profileName, setProfileName] = useState<string | null>(null);
 
-  const displayName = fullName || worker.name || "Worker";
+  // Fetch the real name from the server if AuthContext doesn't have it yet.
+  useEffect(() => {
+    if (!fullName) {
+      fetchProfile()
+        .then((p) => setProfileName(p.fullName ?? null))
+        .catch(() => {});
+    }
+  }, [fullName]);
+
+  const displayName = fullName || profileName || "Worker";
   const {
     isOnline,
     offers,
@@ -105,7 +124,7 @@ export default function HomeScreen() {
           </View>
           <View>
             <Text style={[styles.greeting, { color: colors.mutedForeground }]}>
-              Good morning
+              {getGreeting()}
             </Text>
             <Text style={[styles.workerName, { color: colors.text }]}>
               {displayName}

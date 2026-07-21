@@ -197,3 +197,80 @@ export async function uploadFile<T = any>(path: string, opts: UploadOptions): Pr
 
   return body as T;
 }
+
+interface PresignedUploadOptions {
+  fileUri: string;
+  /** Must match the Content-Type the presigned URL was signed with. */
+  contentType: string;
+  /** Called with a 0..1 fraction as bytes stream to S3. */
+  onProgress?: (fraction: number) => void;
+}
+
+/**
+ * PUTs a file's raw bytes directly to a presigned S3 URL, streaming from disk
+ * with progress. This bypasses our EC2 server entirely — the phone uploads
+ * straight to S3. We use `createUploadTask` with BINARY_CONTENT (not multipart)
+ * because a presigned PUT expects the file body as-is, and RN's `fetch` can't
+ * reliably stream a large local file. Unlike `uploadFile`, there's no bearer
+ * token here — the presigned URL is the credential.
+ */
+export async function uploadFileToUrl(
+  url: string,
+  { fileUri, contentType, onProgress }: PresignedUploadOptions
+): Promise<{ status: number; etag: string | null }> {
+  const task = FileSystem.createUploadTask(
+    url,
+    fileUri,
+    {
+      httpMethod: "PUT",
+      uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+      headers: { "Content-Type": contentType },
+    },
+    (data) => {
+      if (onProgress && data.totalBytesExpectedToSend > 0) {
+        onProgress(Math.min(1, data.totalBytesSent / data.totalBytesExpectedToSend));
+      }
+    }
+  );
+
+  let result: FileSystem.FileSystemUploadResult | null | undefined;
+  try {
+    result = await task.uploadAsync();
+  } catch (err: any) {
+    // A THROW here (vs. a non-2xx result below) means the request never
+    // completed at the transport layer — the device couldn't connect to the
+    // presigned URL's host (unreachable/internal address, bad TLS, blocked
+    // port). It is NOT a signature/content-type mismatch (those return a 403
+    // result and fall through to the status check).
+    if (__DEV__) {
+      let host = url;
+      try {
+        host = new URL(url).host;
+      } catch {}
+      console.log(`[upload] PUT to ${host} threw:`, err?.message ?? err);
+    }
+    throw new ApiError(
+      "Upload failed. Check your connection and try again.",
+      0,
+      { reason: "transport", detail: err?.message ?? String(err) }
+    );
+  }
+
+  if (__DEV__) {
+    console.log(`[upload] PUT -> ${result?.status}`, result?.body?.slice?.(0, 300));
+  }
+
+  if (!result) {
+    // uploadAsync resolves undefined when the task is cancelled.
+    throw new ApiError("Upload was interrupted. Please try again.", 0, null);
+  }
+
+  if (result.status < 200 || result.status >= 300) {
+    // S3 returned an error (e.g. 403 SignatureDoesNotMatch). result.body holds
+    // the XML explaining exactly why — surfaced in the dev log above.
+    throw new ApiError("Upload failed. Please try again.", result.status, result.body ?? null);
+  }
+
+  const headers = (result.headers ?? {}) as Record<string, string>;
+  return { status: result.status, etag: headers.ETag ?? headers.etag ?? null };
+}

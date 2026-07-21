@@ -19,6 +19,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { PickerModal } from "@/components/onboarding/PickerModal";
+import { AddSpecializationModal } from "@/components/profile/AddSpecializationModal";
 import { absoluteUrl } from "@/constants/config";
 import { getServiceById } from "@/constants/services";
 import { useAuth } from "@/context/AuthContext";
@@ -32,7 +33,12 @@ import {
   updateExpertise,
   updateProfile,
 } from "@/services/profileApi";
-import { ProfileData, ProfileExpertiseCategory } from "@/types/profile";
+import {
+  ExpertiseStatus,
+  ProfileData,
+  ProfileExpertiseCategory,
+  subcategoryStatus,
+} from "@/types/profile";
 
 export default function ProfileScreen() {
   const colors = useColors();
@@ -124,8 +130,17 @@ export default function ProfileScreen() {
 
   const photoUri = absoluteUrl(profile.photoUrl);
   // The worker only ever picks one role during onboarding — only show that
-  // category here, not the other 7 the account isn't set up for.
-  const myCategory = profile.expertise.find((cat) => cat.active) ?? null;
+  // category here, not the other 7 the account isn't set up for. We prefer the
+  // category the backend flags `active`, but fall back to whichever category
+  // actually holds skills (active/pending/rejected), and finally to the sole
+  // category if there's just one — so a backend glitch that drops the
+  // category-level `active` flag can't wipe the whole section.
+  const myCategory =
+    profile.expertise.find((cat) => cat.active) ??
+    profile.expertise.find((cat) =>
+      cat.subcategories.some((s) => subcategoryStatus(s) !== "none"),
+    ) ??
+    (profile.expertise.length === 1 ? profile.expertise[0] : null);
 
   const settings = [
     {
@@ -238,7 +253,11 @@ export default function ProfileScreen() {
           My Expertise
         </Text>
         {myCategory ? (
-          <MyExpertiseSection category={myCategory} onSaved={setProfile} />
+          <MyExpertiseSection
+            profile={profile}
+            category={myCategory}
+            onProfileChange={setProfile}
+          />
         ) : (
           <Text
             style={[
@@ -344,70 +363,93 @@ export default function ProfileScreen() {
 
 /**
  * Shows the worker's one chosen category (e.g. "Cleaning") and its
- * sub-services as a multi-select list — same chip + accent-color language as
- * the onboarding skill picker, not a new visual pattern. Toggling a chip only
- * edits a local draft; nothing is sent until "Update Expertise" is tapped, so
- * a run of taps costs one network call instead of one per tap.
+ * sub-services. Specializations that are already approved show as active;
+ * adding a new one is gated behind a demonstration video that our team
+ * reviews (AddSpecializationModal) — so tapping an unheld specialization opens
+ * the upload flow rather than toggling it on immediately. Approved skills can
+ * still be removed directly.
  */
 function MyExpertiseSection({
+  profile,
   category,
-  onSaved,
+  onProfileChange,
 }: {
+  profile: ProfileData;
   category: ProfileExpertiseCategory;
-  onSaved: (p: ProfileData) => void;
+  onProfileChange: (p: ProfileData) => void;
 }) {
   const colors = useColors();
   const meta = getServiceById(category.category);
-  const [draft, setDraft] = useState<Record<string, boolean>>({});
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [addSub, setAddSub] = useState<{ key: string; name: string } | null>(null);
+  const [removingKey, setRemovingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const initial: Record<string, boolean> = {};
-    category.subcategories.forEach((s) => {
-      initial[s.key] = s.active;
-    });
-    setDraft(initial);
-    setError(null);
-    setSaved(false);
-  }, [category]);
-
-  const toggle = (key: string) => {
-    setDraft((prev) => ({ ...prev, [key]: !prev[key] }));
-    setError(null);
-    setSaved(false);
-  };
-
-  const isDirty = category.subcategories.some(
-    (s) => !!draft[s.key] !== s.active,
-  );
-  const activeCount = Object.values(draft).filter(Boolean).length;
+  const activeCount = category.subcategories.filter(
+    (s) => subcategoryStatus(s) === "active",
+  ).length;
+  const pendingCount = category.subcategories.filter(
+    (s) => subcategoryStatus(s) === "pending",
+  ).length;
   const totalCount = category.subcategories.length;
   const progressPercent = totalCount > 0 ? (activeCount / totalCount) * 100 : 0;
 
-  const handleUpdate = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      const subcategories = category.subcategories
-        .filter((s) => draft[s.key])
-        .map((s) => s.key);
-      const payload = subcategories.length
-        ? [{ category: category.category, subcategories }]
-        : [];
-      const updated = await updateExpertise(payload);
-      onSaved(updated);
-      setSaved(true);
-    } catch (e) {
-      setError(
-        e instanceof ApiError
-          ? e.message
-          : "Couldn't update your expertise. Please try again.",
-      );
-    } finally {
-      setSaving(false);
+  // Reflect a just-submitted video locally: the subcategory becomes `pending`
+  // until the backend approves it. If the confirm call already returned the
+  // updated profile we use that; otherwise we patch optimistically.
+  const handleSubmitted = (updated: ProfileData | null, subKey: string) => {
+    if (updated) {
+      onProfileChange(updated);
+    } else {
+      onProfileChange({
+        ...profile,
+        expertise: profile.expertise.map((cat) =>
+          cat.category !== category.category
+            ? cat
+            : {
+                ...cat,
+                subcategories: cat.subcategories.map((s) =>
+                  s.key === subKey ? { ...s, status: "pending" as ExpertiseStatus } : s,
+                ),
+              },
+        ),
+      });
     }
+  };
+
+  const removeActive = (subKey: string, subName: string) => {
+    Alert.alert(
+      "Remove specialization?",
+      `“${subName}” will no longer appear on your profile. You'll need to submit a new video to add it back.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            setRemovingKey(subKey);
+            setError(null);
+            try {
+              const remaining = category.subcategories
+                .filter((s) => subcategoryStatus(s) === "active" && s.key !== subKey)
+                .map((s) => s.key);
+              const payload = remaining.length
+                ? [{ category: category.category, subcategories: remaining }]
+                : [];
+              const updated = await updateExpertise(payload);
+              onProfileChange(updated);
+            } catch (e) {
+              setError(
+                e instanceof ApiError
+                  ? e.message
+                  : "Couldn't remove that specialization. Please try again.",
+              );
+            } finally {
+              setRemovingKey(null);
+            }
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -431,7 +473,8 @@ function MyExpertiseSection({
               {category.name}
             </Text>
             <Text style={[styles.premiumHeaderSubtitle, { color: colors.mutedForeground }]}>
-              {activeCount} of {totalCount} skills selected
+              {activeCount} of {totalCount} skills active
+              {pendingCount > 0 ? ` · ${pendingCount} in review` : ""}
             </Text>
           </View>
           <View style={[styles.premiumBadge, { backgroundColor: colors.accent }]}>
@@ -448,38 +491,78 @@ function MyExpertiseSection({
             Specializations
           </Text>
           <Text style={[styles.premiumListSublabel, { color: colors.mutedForeground }]}>
-            Tap to select the services you excel at providing.
+            Add a new skill by uploading a short video of you doing it — our team
+            reviews it before it goes live.
           </Text>
-          
+
           <View style={styles.servicesList}>
             {category.subcategories.map((sub, index) => {
-              const selected = !!draft[sub.key];
+              const status = subcategoryStatus(sub);
               const isLast = index === category.subcategories.length - 1;
+              const removing = removingKey === sub.key;
+              const canAdd = status === "none" || status === "rejected";
+
               return (
                 <Pressable
                   key={sub.key}
-                  onPress={() => toggle(sub.key)}
+                  onPress={
+                    canAdd && !removing
+                      ? () => setAddSub({ key: sub.key, name: sub.name })
+                      : undefined
+                  }
                   style={[
                     styles.serviceRow,
-                    !isLast && { 
-                      borderBottomWidth: StyleSheet.hairlineWidth, 
-                      borderBottomColor: colors.border 
-                    }
+                    !isLast && {
+                      borderBottomWidth: StyleSheet.hairlineWidth,
+                      borderBottomColor: colors.border,
+                    },
                   ]}
                 >
                   <Text
                     style={[
                       styles.serviceRowText,
                       {
-                        color: selected ? colors.text : colors.mutedForeground,
-                        fontFamily: selected ? "Inter_600SemiBold" : "Inter_400Regular",
+                        color: status === "active" ? colors.text : colors.mutedForeground,
+                        fontFamily:
+                          status === "active" ? "Inter_600SemiBold" : "Inter_400Regular",
                       },
                     ]}
                   >
                     {sub.name}
                   </Text>
-                  {selected && (
-                    <Feather name="check" size={18} color={colors.primary} />
+
+                  {removing ? (
+                    <ActivityIndicator size="small" color={colors.mutedForeground} />
+                  ) : status === "active" ? (
+                    <View style={styles.rowAccessory}>
+                      <Feather name="check-circle" size={18} color={colors.success} />
+                      <Pressable
+                        onPress={() => removeActive(sub.key, sub.name)}
+                        hitSlop={10}
+                        style={styles.removeBtn}
+                      >
+                        <Feather name="x" size={16} color={colors.mutedForeground} />
+                      </Pressable>
+                    </View>
+                  ) : status === "pending" ? (
+                    <View style={[styles.statusPill, { backgroundColor: colors.warningLight }]}>
+                      <Feather name="clock" size={12} color={colors.warning} />
+                      <Text style={[styles.statusPillText, { color: colors.warning }]}>
+                        In review
+                      </Text>
+                    </View>
+                  ) : status === "rejected" ? (
+                    <View style={[styles.statusPill, { backgroundColor: colors.accent }]}>
+                      <Feather name="rotate-ccw" size={12} color={colors.primary} />
+                      <Text style={[styles.statusPillText, { color: colors.primary }]}>
+                        Retry
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={[styles.statusPill, { backgroundColor: colors.accent }]}>
+                      <Feather name="plus" size={12} color={colors.primary} />
+                      <Text style={[styles.statusPillText, { color: colors.primary }]}>Add</Text>
+                    </View>
                   )}
                 </Pressable>
               );
@@ -490,46 +573,19 @@ function MyExpertiseSection({
         {error && (
           <View style={styles.premiumErrorWrap}>
             <Feather name="alert-circle" size={14} color={colors.destructive} />
-            <Text style={[styles.premiumError, { color: colors.destructive }]}>
-              {error}
-            </Text>
-          </View>
-        )}
-
-        {isDirty && (
-          <View style={styles.premiumActionWrap}>
-            <Pressable
-              style={[
-                styles.premiumUpdateBtn,
-                { backgroundColor: colors.primary },
-                saving && { opacity: 0.7 }
-              ]}
-              onPress={handleUpdate}
-              disabled={saving}
-            >
-              {saving ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <>
-                  <Text style={styles.premiumUpdateText}>Save Expertise</Text>
-                  <Feather name="arrow-right" size={16} color="#fff" />
-                </>
-              )}
-            </Pressable>
-          </View>
-        )}
-
-        {saved && !isDirty && (
-          <View style={styles.premiumActionWrap}>
-            <View style={[styles.premiumSavedRow, { backgroundColor: colors.successLight }]}>
-              <Feather name="check-circle" size={16} color={colors.success} />
-              <Text style={[styles.premiumSavedText, { color: colors.success }]}>
-                Expertise successfully updated
-              </Text>
-            </View>
+            <Text style={[styles.premiumError, { color: colors.destructive }]}>{error}</Text>
           </View>
         )}
       </View>
+
+      <AddSpecializationModal
+        visible={!!addSub}
+        categoryId={category.category}
+        categoryName={category.name}
+        subcategory={addSub}
+        onClose={() => setAddSub(null)}
+        onSubmitted={handleSubmitted}
+      />
     </View>
   );
 }
@@ -982,7 +1038,20 @@ const styles = StyleSheet.create({
   },
   serviceRowText: {
     fontSize: 15,
+    flex: 1,
+    paddingRight: 12,
   },
+  rowAccessory: { flexDirection: "row", alignItems: "center", gap: 10 },
+  removeBtn: { padding: 2 },
+  statusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  statusPillText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   premiumErrorWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -995,28 +1064,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: "Inter_500Medium",
   },
-  premiumActionWrap: {
-    padding: 20,
-    paddingTop: 0,
-  },
-  premiumUpdateBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    height: 52,
-    borderRadius: 16,
-  },
-  premiumUpdateText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  premiumSavedRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    height: 52,
-    borderRadius: 16,
-  },
-  premiumSavedText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   settingsCard: {
     borderRadius: 16,
     borderWidth: 1,

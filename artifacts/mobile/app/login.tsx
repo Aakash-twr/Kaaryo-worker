@@ -1,8 +1,8 @@
-import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -98,9 +98,11 @@ export default function LoginScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.brand}>
-          <View style={[styles.logo, { backgroundColor: colors.primary }]}>
-            <Feather name="briefcase" size={28} color="#fff" />
-          </View>
+          <Image
+            source={require("@/assets/images/k-worker.png")}
+            style={styles.logo}
+            resizeMode="cover"
+          />
           <Text style={[styles.wordmark, { color: colors.text }]}>Kaaryo</Text>
           <View style={[styles.badge, { backgroundColor: colors.accent }]}>
             <Text style={[styles.badgeText, { color: colors.primary }]}>WORKER</Text>

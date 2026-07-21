@@ -4,12 +4,12 @@
     "slug": "mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/k-worker.png",
     "scheme": "mobile",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/images/icon.png",
+      "image": "./assets/images/k-worker.png",
       "resizeMode": "contain",
       "backgroundColor": "#0A3C30"
     },
@@ -33,7 +33,7 @@
       "package": "com.akashtwr.mobile"
     },
     "web": {
-      "favicon": "./assets/images/icon.png"
+      "favicon": "./assets/images/k-worker.png"
     },
     "plugins": [
       [
@@ -44,6 +44,12 @@
       ],
       "expo-font",
       "expo-web-browser",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Kaaryo needs access to your gallery so you can upload your practical task videos."
+        }
+      ],
       [
         "expo-location",
         {

@@ -8,6 +8,33 @@ export interface ReferenceContact {
 
 const createEmptyReference = (): ReferenceContact => ({ name: "", relationship: null, phone: "" });
 
+export type PracticalVideoStatus =
+  | "not-started"
+  | "selected" // picked & validated locally, not yet uploaded
+  | "uploading"
+  | "uploaded" // confirmed on the server
+  | "failed";
+
+export interface PracticalVideoState {
+  localUri: string | null;
+  fileName: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  durationSeconds: number | null;
+  s3Key: string | null;
+  status: PracticalVideoStatus;
+}
+
+export const createEmptyPracticalVideo = (): PracticalVideoState => ({
+  localUri: null,
+  fileName: null,
+  mimeType: null,
+  sizeBytes: null,
+  durationSeconds: null,
+  s3Key: null,
+  status: "not-started",
+});
+
 export interface OnboardingData {
   // Screen 2 — personal details
   fullName: string;
@@ -33,6 +60,11 @@ export interface OnboardingData {
   // Screen 5 — face match
   faceMatchStatus: "pending" | "success" | "failed" | "review";
   faceMatchAttempts: number;
+
+  // Screen 5b — practical video task (recorded outside the app, uploaded here)
+  practicalVideoTask1: PracticalVideoState;
+  practicalVideoTask2: PracticalVideoState;
+  practicalVideosSubmittedAt: string | null;
 
   // Screen 6 — work details
   skills: string[];
@@ -81,6 +113,10 @@ export const createEmptyOnboardingData = (): OnboardingData => ({
 
   faceMatchStatus: "pending",
   faceMatchAttempts: 0,
+
+  practicalVideoTask1: createEmptyPracticalVideo(),
+  practicalVideoTask2: createEmptyPracticalVideo(),
+  practicalVideosSubmittedAt: null,
 
   skills: [],
   experience: null,
